@@ -212,15 +212,14 @@ jobs:
           failed = [job for job, data in needs.items() if data.get('result') == 'failure']
           print(', '.join(failed))
           ")
+          MSG="Build #${{ github.run_number }} failed in job(s): ${FAILED_JOBS}"$'\n\n'
+          MSG+="Commit:  ${{ github.sha }}"$'\n'
+          MSG+="Branch:  ${{ github.ref_name }}"$'\n'
+          MSG+="Author:  ${{ github.actor }}"$'\n\n'
+          MSG+="View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           aws ses send-email \
             --region us-east-1 \
             --from brian.thomason@gmail.com \
             --to brian.thomason@gmail.com \
             --subject "Foxi Linux build #${{ github.run_number }} failed" \
-            --text "Build #${{ github.run_number }} failed in job(s): ${FAILED_JOBS}
-
-Commit:  ${{ github.sha }}
-Branch:  ${{ github.ref_name }}
-Author:  ${{ github.actor }}
-
-View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --text "$MSG"

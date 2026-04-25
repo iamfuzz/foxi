@@ -64,13 +64,12 @@ jobs:
 
       - name: Send failure email
         run: |
+          MSG="The daily kernel update check failed."$'\n\n'
+          MSG+="This usually means kernel.org is unreachable or the check script has a bug."$'\n\n'
+          MSG+="View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           aws ses send-email \
             --region us-east-1 \
-            --from ${{ env.NOTIFY_EMAIL }} \
-            --to ${{ env.NOTIFY_EMAIL }} \
+            --from "${{ env.NOTIFY_EMAIL }}" \
+            --to "${{ env.NOTIFY_EMAIL }}" \
             --subject "Foxi update-check failed (${{ github.run_number }})" \
-            --text "The daily kernel update check failed.
-
-This usually means kernel.org is unreachable or the check script has a bug.
-
-View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --text "$MSG"
