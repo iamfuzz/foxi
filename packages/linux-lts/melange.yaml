@@ -65,7 +65,7 @@ pipeline:
       wget -q "${APORTS}/APKBUILD" -O APKBUILD.alpine || true
       # Extract and download any patches referenced in Alpine's APKBUILD
       if [ -f APKBUILD.alpine ]; then
-        grep '^source=' APKBUILD.alpine | grep -oP '"[^"]*\.patch[^"]*"' | tr -d '"' | while read p; do
+        grep '^source=' APKBUILD.alpine | grep -Eo '"[^"]*\.patch[^"]*"' | tr -d '"' | while read p; do
           wget -q "${APORTS}/${p}" -O "alpine-${p}" || true
         done
       fi
