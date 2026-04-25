@@ -8,6 +8,8 @@ IMAGE_CONFIG="$REPO_ROOT/images/ec2-base.yaml"
 OUTPUT_IMAGE="${OUTPUT_IMAGE:-foxi:latest}"
 OUTPUT_TAR="${OUTPUT_TAR:-$REPO_ROOT/dist/foxi.tar}"
 ARCHES="${ARCHES:-x86_64,aarch64}"
+PACKAGES_DIR="${PACKAGES_DIR:-$REPO_ROOT/packages}"
+SIGNING_KEY_PUB="${SIGNING_KEY_PUB:-$REPO_ROOT/signing.rsa.pub}"
 
 if ! command -v apko &>/dev/null; then
   echo "apko not found. Install from:"
@@ -22,6 +24,8 @@ apko build "$IMAGE_CONFIG" \
   "$OUTPUT_IMAGE" \
   "$OUTPUT_TAR" \
   --arch "$ARCHES" \
+  --repository-append "@local $PACKAGES_DIR" \
+  --keyring-append "$SIGNING_KEY_PUB" \
   ${APKO_EXTRA_ARGS:-}
 
 echo ""

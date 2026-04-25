@@ -2,7 +2,7 @@
 
 A minimal Linux distribution for AWS EC2 built from Alpine Linux kernel sources using the Wolfi/Chainguard toolchain.
 
-**Why it exists:** EC2 instances that can consume [Chainguard packages](https://www.chainguard.dev/chainguard-images) directly from `apk`, on a kernel with Alpine's security hardening, with a fully reproducible build pipeline.
+**Why it exists:** EC2 instances that can consume [Chainguard packages](https://www.chainguard.dev/os-packages) directly from `apk`, on a kernel with Alpine's security hardening, with a fully reproducible build pipeline.
 
 ## How it's built
 
@@ -28,30 +28,14 @@ Kernel updates are checked daily. When a new 6.6.x release appears on kernel.org
 
 ### Find the latest AMI
 
-AMI IDs are published with each build in [GitHub Releases](https://github.com/iamfuzz/foxi/releases). You can also look them up directly:
-
-```bash
-aws ec2 describe-images \
-  --region us-east-1 \
-  --owners 647081594955 \
-  --filters "Name=tag:ManagedBy,Values=foxi" \
-  --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name,CreationDate]' \
-  --output table
-```
+The latest AMI ID is published with each build on the [Releases page](https://github.com/iamfuzz/foxi/releases). Grab the AMI ID from there, then launch with:
 
 ### Launch an instance
 
 ```bash
-AMI_ID=$(aws ec2 describe-images \
-  --region us-east-1 \
-  --owners 647081594955 \
-  --filters "Name=tag:ManagedBy,Values=foxi" \
-  --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-  --output text)
-
 aws ec2 run-instances \
   --region us-east-1 \
-  --image-id "$AMI_ID" \
+  --image-id ami-XXXXXXXXXXXXXXXXX \
   --instance-type t3.micro \
   --key-name YOUR_KEY_PAIR \
   --metadata-options HttpTokens=required \
@@ -170,5 +154,5 @@ The Linux kernel included in the image is licensed under GPL-2.0-only. Source is
 - IMDSv2 is enforced on launch (`HttpTokens=required`)
 - Root login over SSH is disabled
 - Password authentication is disabled
-- The AMI is registered as private by default
+- AMIs are public by default — the latest AMI ID is published with each [GitHub Release](https://github.com/iamfuzz/foxi/releases)
 - Signing keys should be rotated periodically; regenerate with `melange keygen` and update the `MELANGE_SIGNING_KEY` secret

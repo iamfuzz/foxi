@@ -130,12 +130,15 @@ pipeline:
       # Kernel image
       install -Dm644 $(make -s ARCH=$KERNEL_ARCH image_name) \
         "${{targets.destdir}}/boot/vmlinuz-${KVER}"
-      # Modules
+      # Modules — install to staging lib/, then relocate to usr/lib/ for
+      # Wolfi usrmerge compliance (/lib must not exist as a real directory)
       make ARCH=$KERNEL_ARCH INSTALL_MOD_PATH=${{targets.destdir}} modules_install
-      # Remove host-absolute symlinks that break in the installed image
       rm -f "${{targets.destdir}}/lib/modules/${KVER}/build"
       rm -f "${{targets.destdir}}/lib/modules/${KVER}/source"
-      depmod -b "${{targets.destdir}}" "$KVER"
+      mkdir -p "${{targets.destdir}}/usr/lib"
+      mv "${{targets.destdir}}/lib/modules" "${{targets.destdir}}/usr/lib/"
+      rmdir "${{targets.destdir}}/lib"
+      depmod -b "${{targets.destdir}}/usr" "$KVER"
 
       # aarch64 device trees
       if [ "${{build.arch}}" = aarch64 ]; then

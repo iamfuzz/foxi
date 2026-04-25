@@ -49,7 +49,7 @@ require_cmd() {
     command -v "$cmd" &>/dev/null || err "Required command not found: $cmd"
   done
 }
-require_cmd crane parted losetup mkfs.ext4 mkfs.fat grub-install grub-mkconfig aws
+require_cmd crane parted losetup mkfs.ext4 mkfs.fat grub-install aws
 
 # ── 1. Create raw disk image ─────────────────────────────────────────────────
 echo "==> Creating ${IMAGE_SIZE} raw disk image"
@@ -77,16 +77,94 @@ mkdir -p "$ROOTFS_DIR/boot/efi"
 mount "${LOOP_DEV}p1" "$ROOTFS_DIR/boot/efi"
 
 echo "==> Extracting OCI image to rootfs"
-# crane export flattens the image layers into a single tar stream
-crane export --platform linux/amd64 "$(cat "$REPO_ROOT/dist/image-ref" 2>/dev/null || echo foxi:latest)" - \
-  | tar x -C "$ROOTFS_DIR" \
-  || {
-    # Fallback: load from the OCI tar and use the first x86_64 image
-    crane push "$IMAGE_TAR" localhost:5000/foxi:latest 2>/dev/null \
-      || docker load < "$IMAGE_TAR"
-    crane export --platform linux/amd64 localhost:5000/foxi:latest - \
-      | tar x -C "$ROOTFS_DIR"
-  }
+# Expand the OCI tarball to a layout directory, then let crane flatten it
+OCI_LAYOUT_DIR="$WORK_DIR/oci-layout"
+mkdir -p "$OCI_LAYOUT_DIR"
+tar xf "$IMAGE_TAR" -C "$OCI_LAYOUT_DIR"
+# crane export flattens all layers; --platform selects the right arch from the index
+crane export --platform linux/amd64 "oci://$OCI_LAYOUT_DIR" - \
+  | tar x -C "$ROOTFS_DIR"
+
+# ── 4a. Write Foxi config files into rootfs ──────────────────────────────────
+mkdir -p "$ROOTFS_DIR/etc/apk"
+cat > "$ROOTFS_DIR/etc/apk/repositories" << 'EOF'
+https://packages.wolfi.dev/os
+EOF
+
+mkdir -p "$ROOTFS_DIR/etc/ssh/sshd_config.d"
+cat > "$ROOTFS_DIR/etc/ssh/sshd_config.d/50-cloud.conf" << 'EOF'
+PermitRootLogin no
+PasswordAuthentication no
+AuthorizedKeysFile .ssh/authorized_keys
+UseDNS no
+EOF
+chmod 0600 "$ROOTFS_DIR/etc/ssh/sshd_config.d/50-cloud.conf"
+
+# OpenRC inittab — serial console for EC2
+cat > "$ROOTFS_DIR/etc/inittab" << 'EOF'
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
+tty1::respawn:/sbin/getty 38400 tty1
+::shutdown:/sbin/openrc shutdown
+EOF
+chmod 0644 "$ROOTFS_DIR/etc/inittab"
+
+# Minimal EC2 init: IMDSv2 SSH key injection + disk growth.
+# Networking is handled by the dhcpcd OpenRC service (and by ip=dhcp on the
+# kernel cmdline for the very first DHCP before dhcpcd starts).
+install -Dm755 /dev/stdin "$ROOTFS_DIR/usr/local/bin/ec2-init" << 'SCRIPT'
+#!/bin/sh
+set -e
+
+# ── SSH key injection via IMDSv2 ─────────────────────────────────────────────
+# Brief wait for dhcpcd to get an address if ec2-init races ahead of it.
+sleep 3
+TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null) || true
+
+if [ -n "$TOKEN" ]; then
+  PUBKEY=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
+    "http://169.254.169.254/latest/meta-data/public-keys/0/openssh-key" 2>/dev/null) || true
+  if [ -n "$PUBKEY" ]; then
+    HOME_DIR=$(getent passwd ec2-user | cut -d: -f6)
+    install -dm700 -o ec2-user -g ec2-user "$HOME_DIR/.ssh"
+    echo "$PUBKEY" > "$HOME_DIR/.ssh/authorized_keys"
+    chmod 600 "$HOME_DIR/.ssh/authorized_keys"
+    chown ec2-user:ec2-user "$HOME_DIR/.ssh/authorized_keys"
+  fi
+fi
+
+# ── Root filesystem expansion ─────────────────────────────────────────────────
+ROOT_DEV=$(findmnt -no SOURCE / 2>/dev/null || true)
+if [ -n "$ROOT_DEV" ]; then
+  resize2fs "$ROOT_DEV" 2>/dev/null || true
+fi
+
+# Mark done so we don't re-run on every boot
+touch /var/lib/ec2-init-done
+SCRIPT
+
+# OpenRC service for ec2-init
+install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/init.d/ec2-init" << 'SVC'
+#!/sbin/openrc-run
+description="EC2 instance initialization (DHCP + SSH keys + disk resize)"
+depend() { after localmount dhcpcd; before sshd; }
+start() {
+  if [ -f /var/lib/ec2-init-done ]; then return 0; fi
+  ebegin "Running EC2 init"
+  /usr/local/bin/ec2-init
+  eend $?
+}
+SVC
+chmod 0755 "$ROOTFS_DIR/etc/init.d/ec2-init"
+
+# Enable services in default runlevel
+mkdir -p "$ROOTFS_DIR/etc/runlevels/default"
+for svc in dhcpcd ec2-init sshd; do
+  ln -sf "/etc/init.d/$svc" "$ROOTFS_DIR/etc/runlevels/default/$svc" 2>/dev/null || true
+done
 
 # ── 4. Configure fstab ────────────────────────────────────────────────────────
 EFI_UUID=$(blkid -s UUID -o value "${LOOP_DEV}p1")
@@ -100,39 +178,63 @@ EOF
 
 # ── 5. Install GRUB ───────────────────────────────────────────────────────────
 echo "==> Installing GRUB"
-for fs in proc sys dev dev/pts; do
-  mkdir -p "$ROOTFS_DIR/$fs"
-  mount --bind "/$fs" "$ROOTFS_DIR/$fs"
-done
 
 KVER=$(cat "$ROOTFS_DIR/boot/kernel-version" 2>/dev/null \
-       || ls "$ROOTFS_DIR/lib/modules/" 2>/dev/null | sort -V | tail -1 \
+       || ls "$ROOTFS_DIR/usr/lib/modules/" 2>/dev/null | sort -V | tail -1 \
        || err "Cannot determine kernel version")
 echo "Kernel version: $KVER"
 
-# Install for x86_64-efi; add --target=i386-pc for BIOS hybrid if desired
-chroot "$ROOTFS_DIR" grub-install \
-  --target=x86_64-efi \
-  --efi-directory=/boot/efi \
-  --bootloader-id=foxi \
-  --recheck \
-  --no-floppy
+# Find the kernel image installed by linux-lts
+VMLINUZ=$(find "$ROOTFS_DIR/boot" -name "vmlinuz-*" | sort -V | tail -1)
+[ -n "$VMLINUZ" ] || err "Cannot find kernel image in rootfs"
+VMLINUZ_REL="${VMLINUZ#$ROOTFS_DIR}"
 
+# Write GRUB defaults before mkconfig
 cat > "$ROOTFS_DIR/etc/default/grub" << EOF
 GRUB_TIMEOUT=1
 GRUB_DISTRIBUTOR="Foxi Linux"
-# EC2 serial console (ttyS0 at 115200) + standard VGA
-GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200n8 console=tty1 net.ifnames=0 biosdevname=0 nvme_core.io_timeout=4294967295"
+GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200n8 console=tty1 net.ifnames=0 biosdevname=0 nvme_core.io_timeout=4294967295 root=UUID=${ROOT_UUID} rw"
 GRUB_TERMINAL="console serial"
 GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1"
 EOF
 
-chroot "$ROOTFS_DIR" grub-mkconfig -o /boot/efi/EFI/foxi/grub.cfg
+# Install GRUB from the host.
+# --removable writes to EFI/BOOT/BOOTX64.EFI, which EC2 firmware uses without NVRAM entries.
+# --no-nvram avoids trying to register a boot entry in the host's NVRAM.
+grub-install \
+  --target=x86_64-efi \
+  --efi-directory="$ROOTFS_DIR/boot/efi" \
+  --boot-directory="$ROOTFS_DIR/boot" \
+  --bootloader-id=foxi \
+  --removable \
+  --no-nvram \
+  --recheck \
+  --no-floppy
 
-# Unmount special filesystems
-for fs in dev/pts dev sys proc; do
-  umount "$ROOTFS_DIR/$fs"
-done
+# Write grub.cfg to the boot directory (where the GRUB prefix points) and also
+# to the EFI directory (where some firmware looks first).
+# No initrd — ext4 is built into the kernel so the root mounts directly.
+# ip=dhcp tells the kernel to run DHCP before init starts (for very early network).
+GRUB_CFG_CONTENT="set timeout=1
+set default=0
+
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+terminal_input serial console
+terminal_output serial console
+
+menuentry \"Foxi Linux ${KVER}\" {
+  insmod part_gpt
+  insmod ext2
+  search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+  linux  ${VMLINUZ_REL} root=UUID=${ROOT_UUID} rw ip=dhcp console=ttyS0,115200n8 console=tty1 net.ifnames=0 biosdevname=0 nvme_core.io_timeout=4294967295
+}"
+
+mkdir -p "$ROOTFS_DIR/boot/grub"
+echo "$GRUB_CFG_CONTENT" > "$ROOTFS_DIR/boot/grub/grub.cfg"
+
+EFI_GRUB_DIR="$ROOTFS_DIR/boot/efi/EFI/foxi"
+mkdir -p "$EFI_GRUB_DIR"
+echo "$GRUB_CFG_CONTENT" > "$EFI_GRUB_DIR/grub.cfg"
 
 # ── 6. Finalize and unmount ───────────────────────────────────────────────────
 umount "$ROOTFS_DIR/boot/efi"
