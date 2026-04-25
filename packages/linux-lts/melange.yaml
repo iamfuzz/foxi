@@ -48,27 +48,37 @@ environment:
       - zstd-dev
 
 pipeline:
-  - uses: fetch
-    with:
-      uri: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{package.version}}.tar.xz
-      # Update this SHA256 when bumping package.version (check-updates.sh does this automatically):
+  - name: fetch-kernel
+    runs: |
+      # Download, verify SHA256, and extract the kernel tarball explicitly.
+      # Update expected-sha256 when bumping package.version (check-updates.sh does this):
       #   curl -sf https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc | grep linux-<ver>.tar.xz
-      expected-sha256: d3d238ede7169dedb642898af0cb1777e9913171eb1c750eb4d9f82350a7132a
+      TARBALL="linux-${{package.version}}.tar.xz"
+      EXPECTED="d3d238ede7169dedb642898af0cb1777e9913171eb1c750eb4d9f82350a7132a"
+      wget -q "https://cdn.kernel.org/pub/linux/kernel/v6.x/${TARBALL}"
+      echo "${EXPECTED}  ${TARBALL}" | sha256sum -c -
+      tar xf "${TARBALL}"
+      rm "${TARBALL}"
 
   - name: fetch-alpine-config
     runs: |
-      # Pull Alpine's battle-tested kernel config for this series as a starting baseline.
-      # Alpine maintains hardware/security hardening config options we want to inherit.
+      # Pull Alpine's kernel config as a baseline. All failures are non-fatal —
+      # we fall back to defconfig + ec2.config if Alpine's resources are unavailable.
+      set +e
       APORTS="https://gitlab.alpinelinux.org/alpine/aports/-/raw/master/main/linux-lts"
-      wget -q "${APORTS}/config-lts.x86_64" -O alpine-config-x86_64 || true
+      wget -q "${APORTS}/config-lts.x86_64"  -O alpine-config-x86_64  || true
       wget -q "${APORTS}/config-lts.aarch64" -O alpine-config-aarch64 || true
-      wget -q "${APORTS}/APKBUILD" -O APKBUILD.alpine || true
-      # Extract and download any patches referenced in Alpine's APKBUILD
+      wget -q "${APORTS}/APKBUILD"           -O APKBUILD.alpine        || true
       if [ -f APKBUILD.alpine ]; then
-        grep '^source=' APKBUILD.alpine | grep -Eo '"[^"]*\.patch[^"]*"' | tr -d '"' | while read p; do
-          wget -q "${APORTS}/${p}" -O "alpine-${p}" || true
-        done
+        grep '^source=' APKBUILD.alpine \
+          | grep -Eo '"[^"]*\.patch[^"]*"' \
+          | tr -d '"' \
+          | while read -r p; do
+              wget -q "${APORTS}/${p}" -O "alpine-${p}" || true
+            done
       fi
+      set -e
+      true
 
   - name: apply-alpine-patches
     runs: |
