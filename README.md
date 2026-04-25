@@ -26,10 +26,22 @@ Kernel updates are checked daily. When a new 6.6.x release appears on kernel.org
 
 ## Using the AMI
 
+### Find the latest AMI
+
+AMI IDs are published with each build in [GitHub Releases](https://github.com/iamfuzz/foxi/releases). You can also look them up directly:
+
+```bash
+aws ec2 describe-images \
+  --region us-east-1 \
+  --owners 647081594955 \
+  --filters "Name=tag:ManagedBy,Values=foxi" \
+  --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name,CreationDate]' \
+  --output table
+```
+
 ### Launch an instance
 
 ```bash
-# Get the latest AMI ID
 AMI_ID=$(aws ec2 describe-images \
   --region us-east-1 \
   --owners 647081594955 \

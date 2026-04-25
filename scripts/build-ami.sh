@@ -213,9 +213,27 @@ aws ec2 create-tags \
     "Key=BuildDate,Value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "Key=ManagedBy,Value=foxi"
 
+# ── 10. Make AMI and snapshot public ─────────────────────────────────────────
+echo "==> Making AMI public"
+aws ec2 modify-image-attribute \
+  --region "$AWS_REGION" \
+  --image-id "$AMI_ID" \
+  --launch-permission "Add=[{Group=all}]"
+
+aws ec2 modify-snapshot-attribute \
+  --region "$AWS_REGION" \
+  --snapshot-id "$SNAPSHOT_ID" \
+  --attribute createVolumePermission \
+  --operation-type add \
+  --group-names all
+
 mkdir -p "$REPO_ROOT/dist"
 echo "$AMI_ID" > "$REPO_ROOT/dist/ami-id.txt"
 echo ""
-echo "AMI ID: $AMI_ID"
+echo "AMI ID:   $AMI_ID  (public)"
 echo "AMI Name: $AMI_NAME"
-echo "Kernel: $KVER"
+echo "Kernel:   $KVER"
+echo "Region:   $AWS_REGION"
+echo ""
+echo "Anyone can launch with:"
+echo "  aws ec2 run-instances --image-id $AMI_ID --region $AWS_REGION ..."
