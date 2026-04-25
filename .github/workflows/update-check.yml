@@ -10,6 +10,9 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  NOTIFY_EMAIL: brian.thomason@gmail.com
+
 jobs:
   check-kernel:
     name: Check Linux LTS kernel
@@ -46,3 +49,28 @@ jobs:
             - [ ] The build workflow runs automatically on merge; verify it passes
           labels: "dependencies,kernel"
           assignees: ${{ github.repository_owner }}
+
+  notify-failure:
+    name: Notify on failure
+    needs: [check-kernel]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Send failure email
+        run: |
+          aws ses send-email \
+            --region us-east-1 \
+            --from ${{ env.NOTIFY_EMAIL }} \
+            --to ${{ env.NOTIFY_EMAIL }} \
+            --subject "Foxi update-check failed (${{ github.run_number }})" \
+            --text "The daily kernel update check failed.
+
+This usually means kernel.org is unreachable or the check script has a bug.
+
+View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

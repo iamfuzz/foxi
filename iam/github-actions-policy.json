@@ -38,6 +38,15 @@
         "ec2:DescribeTags"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "SESNotifications",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendRawEmail"
+      ],
+      "Resource": "*"
     }
   ]
 }

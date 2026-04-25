@@ -189,3 +189,38 @@ jobs:
             **Commit:** ${{ github.sha }}
             **Kernel:** see packages/linux-lts/melange.yaml
           files: dist/ami-id.txt
+
+  # ── Failure notification ────────────────────────────────────────────────────
+  notify-failure:
+    name: Notify on failure
+    needs: [build-packages, build-image, create-ami]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Send failure email
+        run: |
+          FAILED_JOBS=$(echo '${{ toJson(needs) }}' \
+            | python3 -c "
+          import sys, json
+          needs = json.load(sys.stdin)
+          failed = [job for job, data in needs.items() if data.get('result') == 'failure']
+          print(', '.join(failed))
+          ")
+          aws ses send-email \
+            --region us-east-1 \
+            --from brian.thomason@gmail.com \
+            --to brian.thomason@gmail.com \
+            --subject "Foxi Linux build #${{ github.run_number }} failed" \
+            --text "Build #${{ github.run_number }} failed in job(s): ${FAILED_JOBS}
+
+Commit:  ${{ github.sha }}
+Branch:  ${{ github.ref_name }}
+Author:  ${{ github.actor }}
+
+View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
