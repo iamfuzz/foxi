@@ -159,6 +159,12 @@ The kernel is built from the upstream 6.6.x LTS tarball with:
   - EFI boot + serial console at `ttyS0:115200`
   - IMDSv2-compatible networking
 
+## License
+
+The build system (scripts, package specs, image configs) is licensed under [Apache-2.0](LICENSE).
+
+The Linux kernel included in the image is licensed under GPL-2.0-only. Source is available at [kernel.org](https://cdn.kernel.org/pub/linux/kernel/v6.x/).
+
 ## Security notes
 
 - IMDSv2 is enforced on launch (`HttpTokens=required`)
