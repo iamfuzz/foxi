@@ -107,6 +107,10 @@ with tarfile.open(image_tar) as outer:
 PYEOF
 
 # ── 4a. Write Foxi config files into rootfs ──────────────────────────────────
+
+# Wolfi's openrc-init is at /usr/bin/openrc-init; the kernel looks for /sbin/init
+ln -sf /usr/bin/openrc-init "$ROOTFS_DIR/sbin/init"
+
 mkdir -p "$ROOTFS_DIR/etc/apk"
 cat > "$ROOTFS_DIR/etc/apk/repositories" << 'EOF'
 https://packages.wolfi.dev/os
@@ -121,16 +125,8 @@ UseDNS no
 EOF
 chmod 0600 "$ROOTFS_DIR/etc/ssh/sshd_config.d/50-cloud.conf"
 
-# OpenRC inittab — serial console for EC2
-cat > "$ROOTFS_DIR/etc/inittab" << 'EOF'
-::sysinit:/sbin/openrc sysinit
-::sysinit:/sbin/openrc boot
-::wait:/sbin/openrc default
-ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
-tty1::respawn:/sbin/getty 38400 tty1
-::shutdown:/sbin/openrc shutdown
-EOF
-chmod 0644 "$ROOTFS_DIR/etc/inittab"
+# openrc-init does NOT use /etc/inittab (that's busybox init). Console getty
+# is handled by the agetty.ttyS0 OpenRC service below.
 
 # Minimal EC2 init: IMDSv2 SSH key injection + disk growth.
 # Networking is handled by the dhcpcd OpenRC service (and by ip=dhcp on the
@@ -150,7 +146,8 @@ if [ -n "$TOKEN" ]; then
     "http://169.254.169.254/latest/meta-data/public-keys/0/openssh-key" 2>/dev/null) || true
   if [ -n "$PUBKEY" ]; then
     HOME_DIR=$(getent passwd ec2-user | cut -d: -f6)
-    install -dm700 -o ec2-user -g ec2-user "$HOME_DIR/.ssh"
+    install -dm700 "$HOME_DIR/.ssh"
+    chown ec2-user:ec2-user "$HOME_DIR/.ssh"
     echo "$PUBKEY" > "$HOME_DIR/.ssh/authorized_keys"
     chmod 600 "$HOME_DIR/.ssh/authorized_keys"
     chown ec2-user:ec2-user "$HOME_DIR/.ssh/authorized_keys"
@@ -167,10 +164,10 @@ fi
 touch /var/lib/ec2-init-done
 SCRIPT
 
-# OpenRC service for ec2-init
-install -Dm644 /dev/stdin "$ROOTFS_DIR/etc/init.d/ec2-init" << 'SVC'
+# ec2-init OpenRC service
+install -Dm755 /dev/stdin "$ROOTFS_DIR/etc/init.d/ec2-init" << 'SVC'
 #!/sbin/openrc-run
-description="EC2 instance initialization (DHCP + SSH keys + disk resize)"
+description="EC2 instance initialization (SSH keys + disk resize)"
 depend() { after localmount dhcpcd; before sshd; }
 start() {
   if [ -f /var/lib/ec2-init-done ]; then return 0; fi
@@ -179,11 +176,38 @@ start() {
   eend $?
 }
 SVC
-chmod 0755 "$ROOTFS_DIR/etc/init.d/ec2-init"
+
+# sshd OpenRC service — Wolfi's openssh-server doesn't ship one
+install -Dm755 /dev/stdin "$ROOTFS_DIR/etc/init.d/sshd" << 'SVC'
+#!/sbin/openrc-run
+description="OpenSSH server"
+command="/usr/bin/sshd"
+command_args="-D"
+pidfile="/run/sshd.pid"
+depend() { need localmount; after ec2-init; }
+start_pre() {
+  # Generate host keys if missing (first boot)
+  for type in rsa ecdsa ed25519; do
+    local key="/etc/ssh/ssh_host_${type}_key"
+    [ -f "$key" ] || /usr/bin/ssh-keygen -q -t "$type" -N "" -f "$key"
+  done
+  mkdir -p /run/sshd
+}
+SVC
+
+# Serial console getty (ttyS0) so EC2 Serial Console works for debugging
+install -Dm755 /dev/stdin "$ROOTFS_DIR/etc/init.d/agetty.ttyS0" << 'SVC'
+#!/sbin/openrc-run
+description="agetty on ttyS0"
+command="/usr/bin/getty"
+command_args="-L ttyS0 115200 vt100"
+respawn=yes
+depend() { after localmount; }
+SVC
 
 # Enable services in default runlevel
 mkdir -p "$ROOTFS_DIR/etc/runlevels/default"
-for svc in dhcpcd ec2-init sshd; do
+for svc in dhcpcd ec2-init sshd agetty.ttyS0; do
   ln -sf "/etc/init.d/$svc" "$ROOTFS_DIR/etc/runlevels/default/$svc" 2>/dev/null || true
 done
 
