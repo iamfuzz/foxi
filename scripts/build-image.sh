@@ -24,7 +24,7 @@ apko build "$IMAGE_CONFIG" \
   "$OUTPUT_IMAGE" \
   "$OUTPUT_TAR" \
   --arch "$ARCHES" \
-  --repository-append "@local $PACKAGES_DIR" \
+  --repository-append "$PACKAGES_DIR" \
   --keyring-append "$SIGNING_KEY_PUB" \
   ${APKO_EXTRA_ARGS:-}
 

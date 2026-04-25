@@ -1,0 +1,67 @@
+package:
+  name: dhcpcd
+  version: 10.3.1
+  epoch: 0
+  description: RFC2131 compliant DHCP client daemon
+  copyright:
+    - license: BSD-2-Clause
+  target-architecture:
+    - x86_64
+    - aarch64
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - wolfi-base
+      - build-base
+      - linux-headers
+      - wget
+
+pipeline:
+  - name: fetch
+    runs: |
+      TARBALL="dhcpcd-${{package.version}}.tar.xz"
+      EXPECTED="1aed450dfd22f280a64f7e5feee148d29727c292a3d1819287cf4f98b12d4a68"
+      wget -q "https://github.com/NetworkConfiguration/dhcpcd/releases/download/v${{package.version}}/${TARBALL}"
+      echo "${EXPECTED}  ${TARBALL}" | sha256sum -c -
+      tar xf "${TARBALL}"
+      rm "${TARBALL}"
+
+  - name: build
+    runs: |
+      cd dhcpcd-${{package.version}}
+      ./configure \
+        --prefix=/usr \
+        --sysconfdir=/etc \
+        --localstatedir=/var \
+        --runstatedir=/run \
+        --disable-udev \
+        --disable-privsep
+      make -j$(nproc)
+
+  - name: install
+    runs: |
+      cd dhcpcd-${{package.version}}
+      make DESTDIR="${{targets.destdir}}" install
+
+      # Wolfi usrmerge: binaries must be in /usr/bin, not /usr/sbin
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      mv "${{targets.destdir}}/usr/sbin/dhcpcd" "${{targets.destdir}}/usr/bin/dhcpcd"
+      rmdir "${{targets.destdir}}/usr/sbin"
+
+      # OpenRC service script
+      mkdir -p "${{targets.destdir}}/etc/init.d"
+      printf '%s\n' \
+        '#!/sbin/openrc-run' \
+        'description="DHCP client"' \
+        'command="/usr/bin/dhcpcd"' \
+        'command_args="-q -b"' \
+        'pidfile="/run/dhcpcd/dhcpcd.pid"' \
+        'depend() { need localmount; after bootmisc; provide net; }' \
+        'start_pre() { mkdir -p /run/dhcpcd; }' \
+        > "${{targets.destdir}}/etc/init.d/dhcpcd"
+      chmod 0755 "${{targets.destdir}}/etc/init.d/dhcpcd"

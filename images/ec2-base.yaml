@@ -13,7 +13,10 @@ contents:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
   packages:
     # ── Kernel ─────────────────────────────────────────────────────────────
-    - linux-lts@local
+    - linux-lts
+
+    # ── DHCP client ────────────────────────────────────────────────────────
+    - dhcpcd
 
     # ── Base userspace ─────────────────────────────────────────────────────
     - wolfi-base

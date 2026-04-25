@@ -49,7 +49,7 @@ require_cmd() {
     command -v "$cmd" &>/dev/null || err "Required command not found: $cmd"
   done
 }
-require_cmd crane parted losetup mkfs.ext4 mkfs.fat grub-install aws
+require_cmd parted losetup mkfs.ext4 mkfs.fat grub-install aws python3
 
 # ── 1. Create raw disk image ─────────────────────────────────────────────────
 echo "==> Creating ${IMAGE_SIZE} raw disk image"
@@ -77,13 +77,34 @@ mkdir -p "$ROOTFS_DIR/boot/efi"
 mount "${LOOP_DEV}p1" "$ROOTFS_DIR/boot/efi"
 
 echo "==> Extracting OCI image to rootfs"
-# Expand the OCI tarball to a layout directory, then let crane flatten it
-OCI_LAYOUT_DIR="$WORK_DIR/oci-layout"
-mkdir -p "$OCI_LAYOUT_DIR"
-tar xf "$IMAGE_TAR" -C "$OCI_LAYOUT_DIR"
-# crane export flattens all layers; --platform selects the right arch from the index
-crane export --platform linux/amd64 "oci://$OCI_LAYOUT_DIR" - \
-  | tar x -C "$ROOTFS_DIR"
+# The apko OCI tar stores each layer as a <digest>.tar.gz file inside the outer tar.
+# Read the OCI index → manifest → layer list, then stream each layer directly.
+# This avoids needing crane or a registry for single-arch images.
+python3 - "$IMAGE_TAR" "$ROOTFS_DIR" << 'PYEOF'
+import json, subprocess, sys, tarfile
+
+image_tar = sys.argv[1]
+rootfs    = sys.argv[2]
+
+with tarfile.open(image_tar) as outer:
+    index   = json.load(outer.extractfile("index.json"))
+    # Pick the amd64 manifest (first for single-arch, or search by platform)
+    mf_digest = next(
+        m["digest"] for m in index["manifests"]
+        if m.get("platform", {}).get("architecture", "amd64") == "amd64"
+    )
+    mf_name = mf_digest.replace("sha256:", "sha256:", 1)  # keep as-is; key in tar
+    manifest = json.load(outer.extractfile(mf_name))
+    for layer_desc in manifest["layers"]:
+        layer_digest = layer_desc["digest"]
+        # Layer is stored as "<hex>.tar.gz" (without sha256: prefix)
+        layer_name = layer_digest.split(":", 1)[1] + ".tar.gz"
+        layer_data = outer.extractfile(layer_name).read()
+        subprocess.run(
+            ["tar", "xz", "-C", rootfs, "--no-same-owner"],
+            input=layer_data, check=True
+        )
+PYEOF
 
 # ── 4a. Write Foxi config files into rootfs ──────────────────────────────────
 mkdir -p "$ROOTFS_DIR/etc/apk"
@@ -190,6 +211,7 @@ VMLINUZ=$(find "$ROOTFS_DIR/boot" -name "vmlinuz-*" | sort -V | tail -1)
 VMLINUZ_REL="${VMLINUZ#$ROOTFS_DIR}"
 
 # Write GRUB defaults before mkconfig
+mkdir -p "$ROOTFS_DIR/etc/default"
 cat > "$ROOTFS_DIR/etc/default/grub" << EOF
 GRUB_TIMEOUT=1
 GRUB_DISTRIBUTOR="Foxi Linux"
@@ -299,8 +321,7 @@ AMI_ID=$(aws ec2 register-image \
       \"SnapshotId\":\"${SNAPSHOT_ID}\",
       \"VolumeType\":\"gp3\",
       \"VolumeSize\":8,
-      \"DeleteOnTermination\":true,
-      \"Encrypted\":false
+      \"DeleteOnTermination\":true
     }
   }]" \
   --query 'ImageId' --output text)
