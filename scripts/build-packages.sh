@@ -46,7 +46,6 @@ build_package() {
     --arch "$arch" \
     --signing-key "$SIGNING_KEY" \
     --out-dir "$PACKAGES_DIR" \
-    --log-policy builtin:stderr \
     ${MELANGE_EXTRA_ARGS:-}
 }
 
