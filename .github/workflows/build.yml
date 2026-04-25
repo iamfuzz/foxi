@@ -1,0 +1,191 @@
+name: Build Foxi Linux
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "images/**"
+      - "scripts/build-*.sh"
+  workflow_dispatch:
+    inputs:
+      create_ami:
+        description: "Create and register AMI (requires AWS credentials)"
+        type: boolean
+        default: false
+      arches:
+        description: "Architectures to build (comma-separated)"
+        default: "x86_64,aarch64"
+
+env:
+  # Update these in GitHub repo vars (Settings → Variables)
+  AWS_REGION:  ${{ vars.AWS_REGION  || 'us-east-1' }}
+  S3_BUCKET:   ${{ vars.S3_BUCKET }}
+
+permissions:
+  contents: read
+  id-token: write   # for OIDC-based AWS auth
+
+jobs:
+  # ── Build APK packages with melange ────────────────────────────────────────
+  build-packages:
+    name: Build packages (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (for cross-compilation)
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Install melange
+        run: |
+          MELANGE_VERSION=$(curl -sf https://api.github.com/repos/chainguard-dev/melange/releases/latest \
+            | jq -r .tag_name)
+          curl -sSfL \
+            "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VERSION}/melange_linux_amd64.tar.gz" \
+            | tar xz -C /tmp
+          sudo install /tmp/melange /usr/local/bin/melange
+
+      - name: Restore signing key
+        env:
+          MELANGE_SIGNING_KEY: ${{ secrets.MELANGE_SIGNING_KEY }}
+        run: |
+          echo "$MELANGE_SIGNING_KEY" > signing.rsa
+          chmod 600 signing.rsa
+          melange keygen --output signing.rsa 2>/dev/null || true   # no-op if key already exists
+
+      - name: Build packages
+        env:
+          ARCHES: ${{ matrix.arch }}
+        run: |
+          chmod +x scripts/build-packages.sh
+          scripts/build-packages.sh
+
+      - name: Upload packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: |
+            packages/${{ matrix.arch }}/
+            packages/melange.rsa.pub
+          retention-days: 7
+
+  # ── Build OCI image with apko ───────────────────────────────────────────────
+  build-image:
+    name: Build OCI image
+    needs: build-packages
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: packages/
+          merge-multiple: true
+
+      - name: Install apko
+        run: |
+          APKO_VERSION=$(curl -sf https://api.github.com/repos/chainguard-dev/apko/releases/latest \
+            | jq -r .tag_name)
+          curl -sSfL \
+            "https://github.com/chainguard-dev/apko/releases/download/${APKO_VERSION}/apko_linux_amd64.tar.gz" \
+            | tar xz -C /tmp
+          sudo install /tmp/apko /usr/local/bin/apko
+
+      - name: Build image
+        id: build
+        env:
+          ARCHES: ${{ github.event.inputs.arches || 'x86_64,aarch64' }}
+        run: |
+          mkdir -p dist
+          chmod +x scripts/build-image.sh
+          scripts/build-image.sh
+          # Record a content digest for downstream steps
+          sha256sum dist/foxi.tar | awk '{print $1}' > dist/image-digest.txt
+          echo "digest=$(cat dist/image-digest.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: foxi-image
+          path: dist/foxi.tar
+          retention-days: 7
+
+  # ── Create EC2 AMI ──────────────────────────────────────────────────────────
+  create-ami:
+    name: Create EC2 AMI (x86_64)
+    needs: build-image
+    # Run on main-branch pushes or when explicitly requested
+    if: |
+      vars.S3_BUCKET != '' &&
+      (github.ref == 'refs/heads/main' || inputs.create_ami == true)
+    # Needs a Linux runner with loop-device support.
+    # Use a self-hosted runner on an EC2 instance, or the ubuntu-22.04 runner
+    # with 'sudo' (loop devices are available on GitHub-hosted runners).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: foxi-image
+          path: dist/
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            parted dosfstools e2fsprogs \
+            grub-efi-amd64-bin grub-common \
+            qemu-utils
+          # crane for OCI image manipulation
+          CRANE_VERSION=$(curl -sf https://api.github.com/repos/google/go-containerregistry/releases/latest \
+            | jq -r .tag_name)
+          curl -sSfL \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_linux_x86_64.tar.gz" \
+            | tar xz -C /tmp
+          sudo install /tmp/crane /usr/local/bin/crane
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build AMI
+        env:
+          S3_BUCKET:  ${{ env.S3_BUCKET }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          AMI_NAME:   foxi-${{ github.sha }}
+          IMAGE_TAG:  ${{ github.sha }}
+        run: |
+          chmod +x scripts/build-ami.sh
+          sudo --preserve-env=S3_BUCKET,AWS_REGION,AMI_NAME,IMAGE_TAG,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN \
+            scripts/build-ami.sh
+
+      - name: Record AMI ID
+        run: |
+          AMI_ID=$(cat dist/ami-id.txt)
+          echo "AMI_ID=$AMI_ID" >> "$GITHUB_ENV"
+          echo "### AMI created: \`$AMI_ID\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "Foxi Linux build ${{ github.run_number }}"
+          body: |
+            **AMI ID (us-east-1):** `${{ env.AMI_ID }}`
+            **Commit:** ${{ github.sha }}
+            **Kernel:** see packages/linux-lts/melange.yaml
+          files: dist/ami-id.txt

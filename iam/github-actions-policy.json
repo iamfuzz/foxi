@@ -1,0 +1,43 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3ImageUpload",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::BUCKET_NAME",
+        "arn:aws:s3:::BUCKET_NAME/*"
+      ]
+    },
+    {
+      "Sid": "EC2Import",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:ImportSnapshot",
+        "ec2:DescribeImportSnapshotTasks",
+        "ec2:CancelImportTask"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2AMI",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RegisterImage",
+        "ec2:DeregisterImage",
+        "ec2:DescribeImages",
+        "ec2:DescribeSnapshots",
+        "ec2:DeleteSnapshot",
+        "ec2:CreateTags",
+        "ec2:DescribeTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

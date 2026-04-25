@@ -1,0 +1,151 @@
+package:
+  name: linux-lts
+  # Keep in sync with KERNEL_VERSION in scripts/check-updates.sh
+  version: 6.6.135
+  epoch: 0
+  description: Linux LTS kernel with Alpine patches, optimized for EC2
+  copyright:
+    - license: GPL-2.0-only
+  target-architecture:
+    - x86_64
+    - aarch64
+
+var-transforms:
+  - from: ${{package.version}}
+    match: ^(\d+\.\d+).*
+    replace: "$1"
+    to: kernel-series
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - wolfi-base
+      - build-base
+      - bash
+      - bc
+      - bison
+      - cpio
+      - diffutils
+      - elfutils-dev
+      - findutils
+      - flex
+      - gmp-dev
+      - kmod
+      - libelf
+      - mpc-dev
+      - mpfr-dev
+      - openssl-dev
+      - pahole
+      - perl
+      - python3
+      - rsync
+      - wget
+      - xz
+      - zlib-dev
+      - zstd-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{package.version}}.tar.xz
+      # Update this SHA256 when bumping package.version (check-updates.sh does this automatically):
+      #   curl -sf https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc | grep linux-<ver>.tar.xz
+      expected-sha256: d3d238ede7169dedb642898af0cb1777e9913171eb1c750eb4d9f82350a7132a
+
+  - name: fetch-alpine-config
+    runs: |
+      # Pull Alpine's battle-tested kernel config for this series as a starting baseline.
+      # Alpine maintains hardware/security hardening config options we want to inherit.
+      APORTS="https://gitlab.alpinelinux.org/alpine/aports/-/raw/master/main/linux-lts"
+      wget -q "${APORTS}/config-lts.x86_64" -O alpine-config-x86_64 || true
+      wget -q "${APORTS}/config-lts.aarch64" -O alpine-config-aarch64 || true
+      wget -q "${APORTS}/APKBUILD" -O APKBUILD.alpine || true
+      # Extract and download any patches referenced in Alpine's APKBUILD
+      if [ -f APKBUILD.alpine ]; then
+        grep '^source=' APKBUILD.alpine | grep -oP '"[^"]*\.patch[^"]*"' | tr -d '"' | while read p; do
+          wget -q "${APORTS}/${p}" -O "alpine-${p}" || true
+        done
+      fi
+
+  - name: apply-alpine-patches
+    runs: |
+      cd linux-${{package.version}}
+      for patch in ../alpine-*.patch; do
+        [ -f "$patch" ] || continue
+        echo "Applying $patch"
+        patch -p1 < "$patch"
+      done
+
+  - name: configure
+    runs: |
+      cd linux-${{package.version}}
+      case "${{build.arch}}" in
+        x86_64)  KERNEL_ARCH=x86_64;  ALPINE_CFG=../alpine-config-x86_64 ;;
+        aarch64) KERNEL_ARCH=arm64;   ALPINE_CFG=../alpine-config-aarch64 ;;
+        *) echo "Unsupported arch: ${{build.arch}}"; exit 1 ;;
+      esac
+
+      make ARCH=$KERNEL_ARCH defconfig
+
+      # Merge Alpine's config (if we fetched it) then apply our EC2 additions
+      if [ -f "$ALPINE_CFG" ]; then
+        ./scripts/kconfig/merge_config.sh -m .config "$ALPINE_CFG"
+      fi
+      ./scripts/kconfig/merge_config.sh -m .config ../config/ec2.config
+
+      make ARCH=$KERNEL_ARCH olddefconfig
+
+  - name: build
+    runs: |
+      cd linux-${{package.version}}
+      case "${{build.arch}}" in
+        x86_64)  KERNEL_ARCH=x86_64; IMAGE_TARGET=bzImage ;;
+        aarch64) KERNEL_ARCH=arm64;  IMAGE_TARGET="Image.gz dtbs" ;;
+      esac
+      make ARCH=$KERNEL_ARCH -j$(nproc) $IMAGE_TARGET modules
+
+  - name: install
+    runs: |
+      cd linux-${{package.version}}
+      case "${{build.arch}}" in
+        x86_64)  KERNEL_ARCH=x86_64 ;;
+        aarch64) KERNEL_ARCH=arm64 ;;
+      esac
+
+      KVER=$(make -s ARCH=$KERNEL_ARCH kernelrelease)
+
+      # Kernel image
+      install -Dm644 $(make -s ARCH=$KERNEL_ARCH image_name) \
+        "${{targets.destdir}}/boot/vmlinuz-${KVER}"
+      # Modules
+      make ARCH=$KERNEL_ARCH INSTALL_MOD_PATH=${{targets.destdir}} modules_install
+      # Remove host-absolute symlinks that break in the installed image
+      rm -f "${{targets.destdir}}/lib/modules/${KVER}/build"
+      rm -f "${{targets.destdir}}/lib/modules/${KVER}/source"
+      depmod -b "${{targets.destdir}}" "$KVER"
+
+      # aarch64 device trees
+      if [ "${{build.arch}}" = aarch64 ]; then
+        make ARCH=$KERNEL_ARCH INSTALL_DTBS_PATH=${{targets.destdir}}/boot/dtbs dtbs_install
+      fi
+
+      # Record the kernel version so build-ami.sh can find the right vmlinuz
+      echo "$KVER" > "${{targets.destdir}}/boot/kernel-version"
+
+subpackages:
+  - name: linux-lts-dev
+    description: Linux LTS kernel headers for out-of-tree module builds
+    pipeline:
+      - runs: |
+          cd linux-${{package.version}}
+          case "${{build.arch}}" in
+            x86_64)  KERNEL_ARCH=x86_64 ;;
+            aarch64) KERNEL_ARCH=arm64 ;;
+          esac
+          make ARCH=$KERNEL_ARCH INSTALL_HDR_PATH=${{targets.destdir}}/usr headers_install
+          # Remove files that conflict with glibc headers
+          find ${{targets.destdir}}/usr/include -name '*.cmd' -delete

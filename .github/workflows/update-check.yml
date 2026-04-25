@@ -1,0 +1,48 @@
+name: Check for Updates
+
+on:
+  schedule:
+    # Daily at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-kernel:
+    name: Check Linux LTS kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for new kernel version
+        id: check
+        run: |
+          chmod +x scripts/check-updates.sh
+          APPLY_UPDATE=true scripts/check-updates.sh kernel
+
+      - name: Open PR if update available
+        if: steps.check.outputs.update_available == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: "update/linux-lts-${{ steps.check.outputs.new_version }}"
+          commit-message: "chore: update linux-lts to ${{ steps.check.outputs.new_version }}"
+          title: "chore: update linux-lts ${{ steps.check.outputs.current_version }} → ${{ steps.check.outputs.new_version }}"
+          body: |
+            Automated kernel update opened by the `update-check` workflow.
+
+            | Field | Value |
+            |-------|-------|
+            | Previous version | `${{ steps.check.outputs.current_version }}` |
+            | New version      | `${{ steps.check.outputs.new_version }}` |
+            | Source           | https://cdn.kernel.org/pub/linux/kernel/v6.x/ |
+
+            **Checklist before merging:**
+            - [ ] Verify the SHA256 in `packages/linux-lts/melange.yaml` matches the tarball
+            - [ ] Review the [kernel changelog](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-${{ steps.check.outputs.new_version }})
+            - [ ] The build workflow runs automatically on merge; verify it passes
+          labels: "dependencies,kernel"
+          assignees: ${{ github.repository_owner }}

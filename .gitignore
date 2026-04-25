@@ -1,0 +1,5 @@
+# Melange signing private key — NEVER commit this
+signing.rsa
+
+# Build outputs
+dist/
