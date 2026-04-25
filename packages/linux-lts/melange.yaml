@@ -39,9 +39,8 @@ environment:
       - mpc-dev
       - mpfr-dev
       - openssl-dev
-      - pahole
       - perl
-      - python3
+      - python-3.13
       - rsync
       - wget
       - xz

@@ -62,6 +62,7 @@ jobs:
       - name: Build packages
         env:
           ARCHES: ${{ matrix.arch }}
+          MELANGE_RUNNER: docker
         run: |
           chmod +x scripts/build-packages.sh
           scripts/build-packages.sh

@@ -32,6 +32,18 @@ fi
 # Copy the public key into the packages directory so apko can verify packages.
 cp "${SIGNING_KEY}.pub" "$PACKAGES_DIR/melange.rsa.pub" 2>/dev/null || true
 
+detect_runner() {
+  if [ -n "${MELANGE_RUNNER:-}" ]; then
+    echo "$MELANGE_RUNNER"
+  elif [ "$(id -u)" = "0" ]; then
+    echo "bubblewrap"
+  elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    echo "docker"
+  else
+    echo "bubblewrap"
+  fi
+}
+
 build_package() {
   local pkg_dir="$1"
   local arch="$2"
@@ -40,12 +52,15 @@ build_package() {
   [ -f "$spec" ] || return 0
 
   pkg_name=$(basename "$pkg_dir")
-  echo "==> Building $pkg_name for $arch"
+  local runner
+  runner=$(detect_runner)
+  echo "==> Building $pkg_name for $arch (runner: $runner)"
 
   melange build "$spec" \
     --arch "$arch" \
     --signing-key "$SIGNING_KEY" \
     --out-dir "$PACKAGES_DIR" \
+    --runner "$runner" \
     ${MELANGE_EXTRA_ARGS:-}
 }
 
