@@ -49,7 +49,7 @@ require_cmd() {
     command -v "$cmd" &>/dev/null || err "Required command not found: $cmd"
   done
 }
-require_cmd parted losetup mkfs.ext4 mkfs.fat grub-install aws python3
+require_cmd parted losetup mkfs.ext4 mkfs.fat grub-mkstandalone aws python3
 
 # ── 1. Create raw disk image ─────────────────────────────────────────────────
 echo "==> Creating ${IMAGE_SIZE} raw disk image"
@@ -229,58 +229,45 @@ KVER=$(cat "$ROOTFS_DIR/boot/kernel-version" 2>/dev/null \
        || err "Cannot determine kernel version")
 echo "Kernel version: $KVER"
 
-# Find the kernel image installed by linux-lts
 VMLINUZ=$(find "$ROOTFS_DIR/boot" -name "vmlinuz-*" | sort -V | tail -1)
 [ -n "$VMLINUZ" ] || err "Cannot find kernel image in rootfs"
 VMLINUZ_REL="${VMLINUZ#$ROOTFS_DIR}"
 
-# Write GRUB defaults before mkconfig
-mkdir -p "$ROOTFS_DIR/etc/default"
-cat > "$ROOTFS_DIR/etc/default/grub" << EOF
-GRUB_TIMEOUT=1
-GRUB_DISTRIBUTOR="Foxi Linux"
-GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200n8 console=tty1 net.ifnames=0 biosdevname=0 nvme_core.io_timeout=4294967295 root=UUID=${ROOT_UUID} rw"
-GRUB_TERMINAL="console serial"
-GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1"
-EOF
-
-# Install GRUB from the host.
-# --removable writes to EFI/BOOT/BOOTX64.EFI, which EC2 firmware uses without NVRAM entries.
-# --no-nvram avoids trying to register a boot entry in the host's NVRAM.
-grub-install \
-  --target=x86_64-efi \
-  --efi-directory="$ROOTFS_DIR/boot/efi" \
-  --boot-directory="$ROOTFS_DIR/boot" \
-  --bootloader-id=foxi \
-  --removable \
-  --no-nvram \
-  --recheck \
-  --no-floppy
-
-# Write grub.cfg to the boot directory (where the GRUB prefix points) and also
-# to the EFI directory (where some firmware looks first).
-# No initrd — ext4 is built into the kernel so the root mounts directly.
-# ip=dhcp tells the kernel to run DHCP before init starts (for very early network).
-GRUB_CFG_CONTENT="set timeout=1
+# Write grub.cfg — used both as the embedded config and installed on disk
+# (so it can be updated on a running instance with grub-mkconfig or manually).
+# No initrd: ext4 is built into the kernel; ip=dhcp triggers kernel DHCP early.
+GRUB_CFG=$(mktemp)
+cat > "$GRUB_CFG" << EOF
+set timeout=1
 set default=0
 
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
 terminal_input serial console
 terminal_output serial console
 
-menuentry \"Foxi Linux ${KVER}\" {
+menuentry "Foxi Linux ${KVER}" {
   insmod part_gpt
   insmod ext2
   search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
   linux  ${VMLINUZ_REL} root=UUID=${ROOT_UUID} rw ip=dhcp console=ttyS0,115200n8 console=tty1 net.ifnames=0 biosdevname=0 nvme_core.io_timeout=4294967295
-}"
+}
+EOF
 
 mkdir -p "$ROOTFS_DIR/boot/grub"
-echo "$GRUB_CFG_CONTENT" > "$ROOTFS_DIR/boot/grub/grub.cfg"
+cp "$GRUB_CFG" "$ROOTFS_DIR/boot/grub/grub.cfg"
 
-EFI_GRUB_DIR="$ROOTFS_DIR/boot/efi/EFI/foxi"
-mkdir -p "$EFI_GRUB_DIR"
-echo "$GRUB_CFG_CONTENT" > "$EFI_GRUB_DIR/grub.cfg"
+# Use grub-mkstandalone to produce a single self-contained BOOTX64.EFI that
+# embeds all required modules and the grub.cfg above.  This avoids the shim
+# chain and the EFI/BOOT/grub.cfg UUID-search step that grub-install emits,
+# both of which have proven unreliable across EC2 firmware versions.
+mkdir -p "$ROOTFS_DIR/boot/efi/EFI/BOOT"
+grub-mkstandalone \
+  --format=x86_64-efi \
+  --output="$ROOTFS_DIR/boot/efi/EFI/BOOT/BOOTX64.EFI" \
+  "boot/grub/grub.cfg=$GRUB_CFG"
+rm -f "$GRUB_CFG"
+
+echo "EFI binary: $(du -sh $ROOTFS_DIR/boot/efi/EFI/BOOT/BOOTX64.EFI | cut -f1)"
 
 # ── 6. Finalize and unmount ───────────────────────────────────────────────────
 umount "$ROOTFS_DIR/boot/efi"
