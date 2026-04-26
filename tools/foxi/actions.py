@@ -134,7 +134,9 @@ def write_file(args):
 
 @handler("run")
 def run_command(args):
-    _run(args["cmd"])
+    result = subprocess.run(args["cmd"], shell=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Command failed: {args['cmd']}")
 
 
 def execute_action(action):
