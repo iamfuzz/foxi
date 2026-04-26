@@ -1,0 +1,70 @@
+name: nginx-mainline
+version: "1.2"
+apk_package: nginx-mainline
+description: Post-install setup for nginx on Foxi Linux
+
+hooks:
+  post-install:
+    - action: add_group
+      args:
+        name: nginx
+        system: true
+    - action: add_user
+      args:
+        name: nginx
+        group: nginx
+        system: true
+        no_home: true
+        shell: /sbin/nologin
+        gecos: "nginx web server"
+    - action: mkdir
+      args:
+        path: /var/log/nginx
+        mode: "0750"
+    - action: mkdir
+      args:
+        path: /var/lib/nginx
+        mode: "0750"
+    - action: mkdir
+      args:
+        path: /var/lib/nginx/tmp
+        mode: "0750"
+    - action: chown
+      args:
+        path: /var/log/nginx
+        owner: nginx
+        group: nginx
+    - action: chown
+      args:
+        path: /var/lib/nginx
+        owner: nginx
+        group: nginx
+        recursive: true
+    - action: mkdir
+      args:
+        path: /var/lib/nginx/html
+        mode: "0755"
+    - action: write_file
+      args:
+        path: /var/lib/nginx/html/index.html
+        overwrite: false
+        content: |
+          <!DOCTYPE html>
+          <html>
+            <head><title>Foxi Linux</title></head>
+            <body><h1>Hello from Foxi Linux</h1></body>
+          </html>
+    - action: run
+      args:
+        cmd: "rc-update add nginx default"
+    - action: run
+      args:
+        cmd: "rc-service nginx start"
+
+  pre-remove:
+    - action: run
+      args:
+        cmd: "rc-service nginx stop 2>/dev/null || true"
+    - action: run
+      args:
+        cmd: "rc-update del nginx default 2>/dev/null || true"
