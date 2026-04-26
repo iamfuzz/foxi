@@ -30,6 +30,7 @@ contents:
     - e2fsprogs
     - e2fsprogs-extra
     - dosfstools
+    - mount
     - util-linux
     - util-linux-misc
 
