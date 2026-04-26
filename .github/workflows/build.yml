@@ -51,18 +51,11 @@ jobs:
             | tar xz -C /tmp --strip-components=1
           sudo install /tmp/melange /usr/local/bin/melange
 
-      - name: Restore signing key
-        env:
-          MELANGE_SIGNING_KEY: ${{ secrets.MELANGE_SIGNING_KEY }}
-        run: |
-          echo "$MELANGE_SIGNING_KEY" > signing.rsa
-          chmod 600 signing.rsa
-          melange keygen --output signing.rsa 2>/dev/null || true   # no-op if key already exists
-
       - name: Build packages
         env:
           ARCHES: ${{ matrix.arch }}
           MELANGE_RUNNER: docker
+          MELANGE_SIGNING_KEY: ${{ secrets.MELANGE_SIGNING_KEY }}
         run: |
           chmod +x scripts/build-packages.sh
           scripts/build-packages.sh
