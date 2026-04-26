@@ -109,6 +109,25 @@ PYEOF
 # sshd StrictModes doesn't reject publickey auth due to wrong ownership.
 chown 1000:1000 "$ROOTFS_DIR/home/ec2-user"
 
+# Install foxi CLI directly from source to guarantee it is present.
+# apko installs it as a package but we belt-and-suspenders here because it has
+# been observed missing from AMIs despite appearing in the image config.
+echo "==> Installing foxi CLI"
+FOXI_TMP=$(mktemp -d)
+curl -sSfL "https://github.com/iamfuzz/foxi/archive/refs/heads/main.tar.gz" \
+  | tar xz -C "$FOXI_TMP" --strip-components=1
+PYTHON_VER=$(ls "$ROOTFS_DIR/usr/lib/" | grep -E '^python3\.[0-9]+$' | sort -V | tail -1)
+[ -n "$PYTHON_VER" ] || err "Cannot find python3 in rootfs"
+SITE="$ROOTFS_DIR/usr/lib/$PYTHON_VER/site-packages"
+mkdir -p "$SITE/foxi"
+cp "$FOXI_TMP/tools/foxi/"*.py "$SITE/foxi/"
+mkdir -p "$ROOTFS_DIR/usr/share/foxi/tricks"
+cp "$FOXI_TMP/tools/tricks/"*.yaml "$ROOTFS_DIR/usr/share/foxi/tricks/"
+printf '#!/usr/bin/env python3\nfrom foxi.cli import main\nmain()\n' \
+  > "$ROOTFS_DIR/usr/bin/foxi"
+chmod 0755 "$ROOTFS_DIR/usr/bin/foxi"
+rm -rf "$FOXI_TMP"
+
 # Wolfi's openrc-init lives at /usr/bin/openrc-init; the kernel needs /sbin/init.
 ln -sf /usr/bin/openrc-init "$ROOTFS_DIR/sbin/init"
 

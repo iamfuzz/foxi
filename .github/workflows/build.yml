@@ -170,17 +170,6 @@ jobs:
           echo "AMI_ID=$AMI_ID" >> "$GITHUB_ENV"
           echo "### AMI created: \`$AMI_ID\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create GitHub release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "build-${{ github.run_number }}"
-          name: "Foxi Linux build ${{ github.run_number }}"
-          body: |
-            **AMI ID (us-east-1):** `${{ env.AMI_ID }}`
-            **Commit:** ${{ github.sha }}
-            **Kernel:** see packages/linux-lts/melange.yaml
-          files: dist/ami-id.txt
 
   # ── Failure notification ────────────────────────────────────────────────────
   notify-failure:
