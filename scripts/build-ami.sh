@@ -235,6 +235,19 @@ respawn_delay=1
 depend() { after localmount; }
 SVC
 
+# reboot / halt / poweroff — Wolfi busybox omits these applets and
+# rc-shutdown is not shipped; use sysrq triggers instead.
+for cmd_pair in "reboot b" "poweroff o" "halt o"; do
+  cmd="${cmd_pair%% *}"
+  trigger="${cmd_pair##* }"
+  install -Dm755 /dev/stdin "$ROOTFS_DIR/sbin/${cmd}" << EOF
+#!/bin/sh
+echo s > /proc/sysrq-trigger
+echo u > /proc/sysrq-trigger
+echo ${trigger} > /proc/sysrq-trigger
+EOF
+done
+
 # Enable services in the default runlevel
 mkdir -p "$ROOTFS_DIR/etc/runlevels/default"
 for svc in dhcpcd ec2-init sshd agetty.ttyS0; do
