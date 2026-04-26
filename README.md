@@ -65,9 +65,54 @@ sudo apk add <package>
 sudo apk upgrade
 ```
 
+## Foxi Tricks
+
+Wolfi packages are designed for containers and intentionally skip post-install scripts (user creation, directory setup, service registration). **Foxi Tricks** fills that gap — a lightweight `apk` wrapper that runs typed post-install actions after a package is installed.
+
+### Install a package with its trick
+
+```bash
+sudo foxi add nginx
+```
+
+This runs `apk add nginx` and then executes nginx's trick: creating the `nginx` user and group, setting up log and data directories with correct ownership, fixing the pid path, enabling the service at boot, and starting it immediately.
+
+### Available tricks
+
+| Package | What it does |
+|---------|-------------|
+| `nginx` | User/group, log dirs, pid fix, autostart |
+
+More tricks are coming. Contributions welcome at [foxi-tricks](https://github.com/iamfuzz/foxi-tricks).
+
+### Manage tricks
+
+```bash
+# Refresh the remote trick index
+sudo foxi tricks update
+
+# List available tricks and which are cached locally
+sudo foxi tricks list
+
+# Pre-fetch a trick without installing the package
+sudo foxi tricks fetch nginx
+```
+
+### Writing your own trick
+
+Each trick is a YAML file with typed actions (`add_user`, `add_group`, `mkdir`, `chown`, `chmod`, `symlink`, `write_file`, `run`). The fastest way to write a new trick is to look up the equivalent Alpine package in [aports](https://gitlab.alpinelinux.org/alpine/aports) and port its `.post-install` script into the typed action format.
+
+For example, Alpine's `nginx.post-install` creates the nginx user and directories — the same steps become `add_group`, `add_user`, and `mkdir` actions in a Foxi trick. The typed format is safer than raw shell: each action is validated before execution and the common operations have idempotency built in (e.g. `add_user` is a no-op if the user already exists).
+
+Submit new tricks as pull requests to [iamfuzz/foxi-tricks](https://github.com/iamfuzz/foxi-tricks).
+
 ## Repository layout
 
 ```
+├── tools/
+│   ├── foxi/                   # foxi CLI source (Python)
+│   ├── tricks/                 # Bundled fallback tricks
+│   └── setup.py
 ├── packages/
 │   └── linux-lts/
 │       ├── melange.yaml        # Kernel package definition
