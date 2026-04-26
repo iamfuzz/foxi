@@ -1,5 +1,5 @@
 name: nginx
-version: "1.4"
+version: "1.5"
 apk_package: nginx
 description: Post-install setup for nginx on Foxi Linux
 
@@ -39,6 +39,9 @@ hooks:
         owner: nginx
         group: nginx
         recursive: true
+    - action: run
+      args:
+        cmd: "sed -i 's|^#pid.*|pid /run/nginx.pid;|' /etc/nginx/nginx.conf"
     - action: run
       args:
         cmd: "rc-update add nginx default"
