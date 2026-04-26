@@ -1,10 +1,13 @@
 name: nginx
-version: "1.2"
+version: "1.3"
 apk_package: nginx
 description: Post-install setup for nginx on Foxi Linux
 
 hooks:
   post-install:
+    - action: run
+      args:
+        cmd: "apk add nginx-mainline-config nginx-mainline-openrc"
     - action: add_group
       args:
         name: nginx
@@ -29,17 +32,6 @@ hooks:
       args:
         path: /var/lib/nginx/tmp
         mode: "0750"
-    - action: chown
-      args:
-        path: /var/log/nginx
-        owner: nginx
-        group: nginx
-    - action: chown
-      args:
-        path: /var/lib/nginx
-        owner: nginx
-        group: nginx
-        recursive: true
     - action: mkdir
       args:
         path: /var/lib/nginx/html
@@ -54,6 +46,17 @@ hooks:
             <head><title>Foxi Linux</title></head>
             <body><h1>Hello from Foxi Linux</h1></body>
           </html>
+    - action: chown
+      args:
+        path: /var/log/nginx
+        owner: nginx
+        group: nginx
+    - action: chown
+      args:
+        path: /var/lib/nginx
+        owner: nginx
+        group: nginx
+        recursive: true
     - action: run
       args:
         cmd: "rc-update add nginx default"
