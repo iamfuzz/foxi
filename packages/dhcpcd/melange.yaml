@@ -66,5 +66,6 @@ pipeline:
         > "${{targets.destdir}}/etc/init.d/dhcpcd"
       chmod 0755 "${{targets.destdir}}/etc/init.d/dhcpcd"
 
-      # Remove runtime state dir (mode 0700 prevents melange xattr save); dhcpcd creates it at runtime
-      rm -rf "${{targets.destdir}}/var/db/dhcpcd"
+      # Remove all /var state dirs — installed with mode 0700 which breaks melange on CI;
+      # dhcpcd creates these at runtime, they must not be in the package
+      chmod -R u+rwX "${{targets.destdir}}/var" && rm -rf "${{targets.destdir}}/var"
