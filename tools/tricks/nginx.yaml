@@ -1,6 +1,6 @@
-name: nginx-mainline
+name: nginx
 version: "1.2"
-apk_package: nginx-mainline
+apk_package: nginx
 description: Post-install setup for nginx on Foxi Linux
 
 hooks:
