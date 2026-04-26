@@ -55,6 +55,9 @@ contents:
     # ── Package management (so the running instance can pull Wolfi/Chainguard pkgs)
     - apk-tools
 
+    # ── Foxi CLI (apk wrapper with post-install tricks) ────────────────────
+    - foxi
+
 archs:
   - x86_64
   - aarch64

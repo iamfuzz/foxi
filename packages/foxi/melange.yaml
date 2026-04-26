@@ -1,0 +1,49 @@
+package:
+  name: foxi
+  version: 0.1.0
+  epoch: 0
+  description: apk wrapper with post-install tricks for Foxi Linux
+  copyright:
+    - license: Apache-2.0
+  target-architecture:
+    - x86_64
+    - aarch64
+  dependencies:
+    runtime:
+      - python3
+      - py3-pyyaml
+
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    packages:
+      - wolfi-baselayout
+      - busybox
+      - python3
+      - wget
+      - ca-certificates
+
+pipeline:
+  - name: fetch
+    runs: |
+      wget -q "https://github.com/iamfuzz/foxi/archive/refs/heads/main.tar.gz" -O foxi.tar.gz
+      tar xf foxi.tar.gz
+      mv foxi-main foxi-src
+
+  - name: install
+    runs: |
+      SITE=$(python3 -c "import site; print(site.getsitepackages()[0])")
+
+      mkdir -p "${{targets.destdir}}${SITE}/foxi"
+      cp foxi-src/tools/foxi/*.py "${{targets.destdir}}${SITE}/foxi/"
+
+      mkdir -p "${{targets.destdir}}/usr/share/foxi/tricks"
+      cp foxi-src/tools/tricks/*.yaml "${{targets.destdir}}/usr/share/foxi/tricks/"
+
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      printf '#!/usr/bin/env python3\nfrom foxi.cli import main\nmain()\n' \
+        > "${{targets.destdir}}/usr/bin/foxi"
+      chmod 0755 "${{targets.destdir}}/usr/bin/foxi"
