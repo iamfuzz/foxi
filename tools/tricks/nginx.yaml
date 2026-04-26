@@ -1,5 +1,5 @@
 name: nginx
-version: "1.3"
+version: "1.4"
 apk_package: nginx
 description: Post-install setup for nginx on Foxi Linux
 
@@ -26,26 +26,8 @@ hooks:
         mode: "0750"
     - action: mkdir
       args:
-        path: /var/lib/nginx
-        mode: "0750"
-    - action: mkdir
-      args:
         path: /var/lib/nginx/tmp
         mode: "0750"
-    - action: mkdir
-      args:
-        path: /var/lib/nginx/html
-        mode: "0755"
-    - action: write_file
-      args:
-        path: /var/lib/nginx/html/index.html
-        overwrite: false
-        content: |
-          <!DOCTYPE html>
-          <html>
-            <head><title>Foxi Linux</title></head>
-            <body><h1>Hello from Foxi Linux</h1></body>
-          </html>
     - action: chown
       args:
         path: /var/log/nginx
