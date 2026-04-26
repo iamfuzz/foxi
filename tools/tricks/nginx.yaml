@@ -1,5 +1,5 @@
 name: nginx
-version: "1.5"
+version: "1.6"
 apk_package: nginx
 description: Post-install setup for nginx on Foxi Linux
 
@@ -47,7 +47,7 @@ hooks:
         cmd: "rc-update add nginx default"
     - action: run
       args:
-        cmd: "rc-service nginx start"
+        cmd: "nginx"
 
   pre-remove:
     - action: run
