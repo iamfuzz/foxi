@@ -15,7 +15,7 @@ on:
         default: false
       arches:
         description: "Architectures to build (comma-separated)"
-        default: "x86_64,aarch64"
+        default: "x86_64"
 
 env:
   # Update these in GitHub repo vars (Settings → Variables)
@@ -33,13 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
+        arch: [x86_64]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU (for cross-compilation)
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Install melange
         run: |
@@ -99,7 +95,7 @@ jobs:
       - name: Build image
         id: build
         env:
-          ARCHES: ${{ github.event.inputs.arches || 'x86_64,aarch64' }}
+          ARCHES: ${{ github.event.inputs.arches || 'x86_64' }}
         run: |
           mkdir -p dist
           chmod +x scripts/build-image.sh
