@@ -136,45 +136,6 @@ Submit new tricks as pull requests to [iamfuzz/foxi-tricks](https://github.com/i
 
 Go to **Actions → Build Foxi Linux → Run workflow**. Check "Create and register AMI" to also publish a new AMI, otherwise it stops after building the image artifact.
 
-## Setting up from scratch
-
-### Prerequisites
-
-- AWS account with permissions to create IAM roles, S3 buckets, and EC2 resources
-- GitHub repository with Actions enabled
-
-### 1. Generate a signing key
-
-```bash
-melange keygen signing.rsa
-# signing.rsa.pub is committed to the repo
-# signing.rsa goes into GitHub as a repository secret
-```
-
-### 2. Run the AWS setup script
-
-```bash
-./scripts/setup-aws.sh \
-  --github-repo YOUR_ORG/YOUR_REPO \
-  --bucket YOUR_BUCKET_NAME \
-  --region us-east-1
-```
-
-This creates the S3 bucket, GitHub OIDC provider, `foxi-github-actions` IAM role, and the `vmimport` service role required by EC2 VM Import.
-
-### 3. Set GitHub repository secrets and variables
-
-| Type | Name | Value |
-|------|------|-------|
-| Secret | `MELANGE_SIGNING_KEY` | Full contents of `signing.rsa` |
-| Secret | `AWS_ROLE_ARN` | Output from setup script |
-| Variable | `AWS_REGION` | e.g. `us-east-1` |
-| Variable | `S3_BUCKET` | Bucket name from setup script |
-
-### 4. Push to main
-
-The build workflow triggers automatically.
-
 ## Kernel configuration
 
 The kernel is built from the upstream 6.6.x LTS tarball with:

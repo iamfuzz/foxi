@@ -65,3 +65,6 @@ pipeline:
         'start_pre() { mkdir -p /run/dhcpcd; }' \
         > "${{targets.destdir}}/etc/init.d/dhcpcd"
       chmod 0755 "${{targets.destdir}}/etc/init.d/dhcpcd"
+
+      # Remove runtime state dir (mode 0700 prevents melange xattr save); dhcpcd creates it at runtime
+      rm -rf "${{targets.destdir}}/var/db/dhcpcd"
