@@ -1,7 +1,7 @@
 package:
   name: linux-lts
   # Keep in sync with KERNEL_VERSION in scripts/check-updates.sh
-  version: 6.6.135
+  version: 6.6.140
   epoch: 0
   description: Linux LTS kernel with Alpine patches, optimized for EC2
   copyright:
